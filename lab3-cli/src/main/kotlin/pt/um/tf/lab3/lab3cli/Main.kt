@@ -1,7 +1,5 @@
 package pt.um.tf.lab3.lab3cli
 
-import pt.um.tf.lab3.lab3cli.Spammer
-import pt.um.tf.lab3.lab3cli.BankFactory
 import java.util.concurrent.*
 import kotlin.system.exitProcess
 

@@ -12,7 +12,7 @@ import java.util.*
 data class Message(var seq : Int = 0,
                    var op : Int = 0,
                    var mov : Long = 0,
-                   var origin : UUID = UUID(0, 0)) : CatalystSerializable {
+                   var origin : String) : CatalystSerializable {
     override fun writeObject(buffer: BufferOutput<*>?, serializer: Serializer?) {
         buffer?.writeInt(seq)?.writeInt(op)?.writeLong(mov)
         serializer?.writeObject(origin, buffer)

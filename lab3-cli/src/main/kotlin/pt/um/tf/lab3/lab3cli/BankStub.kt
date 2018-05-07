@@ -1,7 +1,6 @@
 package pt.um.tf.lab3.lab3cli
 
 import io.atomix.catalyst.concurrent.ThreadContext
-import io.atomix.catalyst.serializer.Serializer
 import pt.haslab.ekit.Spread
 import pt.um.tf.lab3.lab3mes.Bank
 import pt.um.tf.lab3.lab3mes.Message
@@ -12,9 +11,8 @@ import java.util.concurrent.CompletableFuture
 import java.util.logging.Level
 import java.util.logging.Logger
 
-class BankStub(val me: UUID,
+class BankStub(val me: String,
                val sp: Spread,
-               val sr: Serializer,
                val tc: ThreadContext) : Bank
 {
     companion object {
