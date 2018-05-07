@@ -4,12 +4,11 @@ import io.atomix.catalyst.concurrent.SingleThreadContext
 import io.atomix.catalyst.serializer.Serializer
 import pt.haslab.ekit.Spread
 import pt.um.tf.lab3.lab3mes.Message
-import pt.um.tf.lab3.lab3mes.NewMessage
 import pt.um.tf.lab3.lab3mes.Reply
 import pt.um.tf.lab3.lab3mes.UpdateMessage
+import spread.MembershipInfo
 import spread.SpreadGroup
 import spread.SpreadMessage
-import java.util.*
 import java.util.concurrent.ThreadLocalRandom
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -20,27 +19,30 @@ fun main(args : Array<String>) {
     main.run()
 }
 
-class Main(s: Boolean) {
+private class Main(s: Boolean) {
     companion object {
         val LOGGER : Logger = Logger.getLogger("Main")
-        val INIT_SPACE : Int = 2048
     }
 
     val tlr = ThreadLocalRandom.current()
-    val me = UUID(tlr.nextLong(), tlr.nextLong())
+    val me = "${tlr.nextLong()}${tlr.nextLong()}${tlr.nextLong()}${tlr.nextLong()}"
     val sr = Serializer()
     val tc = SingleThreadContext("srv-%d",sr)
     val acc = Account()
-    val spread = Spread("srv-$me", false)
-    var phase: Phase = if (s) Phase.first() else Phase.initPhase()
-    val waitQueue : Queue<Message> by lazy {
-        ArrayDeque<Message>(INIT_SPACE)
-    }
+    val spread = Spread("srv-$me", true)
+    var quality: Quality = if (s) Quality.first() else Quality.initFollow()
+    val known = mutableSetOf<String>()
+
     lateinit var spreadGroup : SpreadGroup
+    lateinit var leaderGroup : SpreadGroup
 
     fun run() {
         sr.register(Message::class.java)
         sr.register(Reply::class.java)
+        sr.register(UpdateMessage::class.java)
+        if(quality == Quality.LEADER) {
+            leaderGroup = spread.privateGroup
+        }
         tc.execute(this::handlers)
           .thenAccept(this::openAndJoin)
         while(readLine() == null);
@@ -63,12 +65,12 @@ class Main(s: Boolean) {
         }).handler(Reply::class.java, {
             sm : SpreadMessage,
             m : Reply -> handler(m)
-        }).handler(NewMessage::class.java, {
+        }).handler(spread.MembershipInfo::class.java, {
             sm : SpreadMessage,
-            m : NewMessage -> handler(sm, m)
+            m : spread.MembershipInfo -> handler(sm, m)
         }).handler(UpdateMessage::class.java, {
             sm : SpreadMessage,
-            m : UpdateMessage -> handler(m)
+            m : UpdateMessage -> handler(sm, m)
         })
     }
 
@@ -77,49 +79,58 @@ class Main(s: Boolean) {
     }
 
     private fun handler(sm: SpreadMessage,
-                        m: NewMessage) {
-        when (phase) {
-            Phase.UP -> {
-                val spm = SpreadMessage()
-                spm.addGroup(sm.sender)
-                spm.setCausal()
-                spread.multicast(spm, UpdateMessage(acc.balance()))
+                        m: MembershipInfo) {
+        when (quality) {
+            Quality.LEADER -> {
+                if (m.isCausedByJoin()) {
+                    val spm = SpreadMessage()
+                    spm.addGroup(m.joined)
+                    spm.setSafe()
+                    spread.multicast(spm, UpdateMessage(acc.balance()))
+                }
             }
-            Phase.UNK -> {
-                if (m.origin == me)
-                    phase.change()
+            Quality.FOLLOWER -> {
+                if (m.isCausedByLeave()) {
+                    if (leaderGroup == m.left) {
+                        val smallest : String = known.min() ?: me
+                        if(me <= smallest) {
+                            quality.rise()
+                            //Leaders can only fail crash
+                            known.clear()
+                        }
+                        else {
+                            known.remove(smallest)
+                        }
+                    }
+                }
+                else if (m.isCausedByJoin()) {
+                    known.add(m.joined.toString())
+                }
             }
-            Phase.WAIT -> {}
         }
 
     }
 
-    private fun handler(m: UpdateMessage) {
-        when (phase) {
-            Phase.WAIT -> {
-                acc.movement(m.accbalance)
-                for (item in waitQueue) {
-                    if(item.op == 1) {
-                        acc.movement(item.mov)
-                    }
-                }
-                waitQueue.clear()
-                phase.change()
+    private fun handler(sm: SpreadMessage,
+                        m: UpdateMessage) {
+        when (quality) {
+            Quality.LEADER -> {
+                LOGGER.log(Level.SEVERE, "Leader got update")
             }
-            Phase.UP -> {}
-            Phase.UNK -> {}
+            Quality.FOLLOWER -> {
+                leaderGroup = sm.sender
+                acc.updateBalance(m.accbalance)
+            }
         }
     }
 
     private fun handler(sm : SpreadMessage,
                         m : Message) {
-        when (phase) {
-            Phase.WAIT -> {
-                waitQueue.add(m)
-            }
-            Phase.UP -> {
+        when (quality) {
+            Quality.LEADER -> {
                 val spm = SpreadMessage()
                 spm.addGroup(sm.sender)
+                spm.setSafe()
                 when (m.op) {
                     1 -> {
                         spread.multicast(spm, Reply(m.seq,1, acc.movement(m.mov), acc.balance()))
@@ -129,7 +140,16 @@ class Main(s: Boolean) {
                     }
                 }
             }
-            Phase.UNK -> {}
+            Quality.FOLLOWER -> {
+                LOGGER.log(Level.WARNING, "Follower got message")
+                //Redirect message to leader
+                if (leaderGroup !in sm.groups) {
+                    val spm = SpreadMessage()
+                    spm.addGroup(leaderGroup)
+                    spm.setSafe()
+                    spread.multicast(spm, m)
+                }
+            }
         }
     }
 
