@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/387019582/Lab3-Kotlin.iml" filepath="$PROJECT_DIR$/.idea/modules/387019582/Lab3-Kotlin.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/-472075960/Lab3-Kotlin-lab3-cli.iml" filepath="$PROJECT_DIR$/.idea/modules/-472075960/Lab3-Kotlin-lab3-cli.iml" group="lab3-cli" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/-472075960/Lab3-Kotlin-lab3-cli_main.iml" filepath="$PROJECT_DIR$/.idea/modules/-472075960/Lab3-Kotlin-lab3-cli_main.iml" group="lab3-cli" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/-472075960/Lab3-Kotlin-lab3-cli_test.iml" filepath="$PROJECT_DIR$/.idea/modules/-472075960/Lab3-Kotlin-lab3-cli_test.iml" group="lab3-cli" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/-472066557/Lab3-Kotlin-lab3-mes.iml" filepath="$PROJECT_DIR$/.idea/modules/-472066557/Lab3-Kotlin-lab3-mes.iml" group="lab3-mes" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/-472066557/Lab3-Kotlin-lab3-mes_main.iml" filepath="$PROJECT_DIR$/.idea/modules/-472066557/Lab3-Kotlin-lab3-mes_main.iml" group="lab3-mes" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/-472066557/Lab3-Kotlin-lab3-mes_test.iml" filepath="$PROJECT_DIR$/.idea/modules/-472066557/Lab3-Kotlin-lab3-mes_test.iml" group="lab3-mes" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/-472060385/Lab3-Kotlin-lab3-srv.iml" filepath="$PROJECT_DIR$/.idea/modules/-472060385/Lab3-Kotlin-lab3-srv.iml" group="lab3-srv" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/-472060385/Lab3-Kotlin-lab3-srv_main.iml" filepath="$PROJECT_DIR$/.idea/modules/-472060385/Lab3-Kotlin-lab3-srv_main.iml" group="lab3-srv" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/modules/-472060385/Lab3-Kotlin-lab3-srv_test.iml" filepath="$PROJECT_DIR$/.idea/modules/-472060385/Lab3-Kotlin-lab3-srv_test.iml" group="lab3-srv" />
+    </modules>
+  </component>
+</project>

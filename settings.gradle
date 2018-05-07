@@ -1,0 +1,2 @@
+rootProject.name = 'Lab3-Kotlin'
+include 'lab3-srv', 'lab3-cli', 'lab3-mes'
