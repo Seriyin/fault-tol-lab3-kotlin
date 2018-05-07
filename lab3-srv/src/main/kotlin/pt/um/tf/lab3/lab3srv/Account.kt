@@ -24,4 +24,8 @@ class Account : Bank {
         }
         return res
     }
+
+    internal fun updateBalance(balance : Long) {
+        this.balance = balance
+    }
 }
