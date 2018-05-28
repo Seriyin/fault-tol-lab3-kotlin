@@ -20,6 +20,10 @@ fun main(args : Array<String>) {
         balance += q.take()
     })
     val b = bf.newBank()
+    var expected : Long = -1
+    while (expected==-1L) {
+        expected = b.balance()
+    }
     println("Got $balance, Expected ${b.balance()}")
     bf.closeBanks()
     tp.shutdown()
