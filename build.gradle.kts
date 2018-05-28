@@ -26,6 +26,7 @@ subprojects {
         plugin("application")
     }
 
+    extra.set("bc_version", "1.59.1")
     extra.set("spread_version", "4.4.0")
     extra.set("kotlin_version", "1.2.41")
     extra.set("catalyst_version", "1.2.1")
