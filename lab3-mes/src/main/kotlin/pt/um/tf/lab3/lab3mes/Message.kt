@@ -9,18 +9,17 @@ import java.util.*
 /**
  * Message with operation.
  */
-data class Message(var seq : Int = 0,
-                   var op : Int = 0,
+data class Message(var op : Int = 0,
                    var mov : Long = 0,
                    var origin : String) : CatalystSerializable {
     override fun writeObject(buffer: BufferOutput<*>?, serializer: Serializer?) {
-        buffer?.writeInt(seq)?.writeInt(op)?.writeLong(mov)
+        buffer?.writeInt(op)
+              ?.writeLong(mov)
         serializer?.writeObject(origin, buffer)
     }
 
     override fun readObject(buffer: BufferInput<*>?, serializer: Serializer?) {
-        seq = buffer!!.readInt()
-        op = buffer.readInt()
+        op = buffer!!.readInt()
         mov = buffer.readLong()
         origin = serializer!!.readObject(buffer)
     }

@@ -8,24 +8,21 @@ import io.atomix.catalyst.serializer.Serializer
 /**
  * Reply to account operation.
  */
-data class Reply(var seq : Int = 0,
-                 var op : Int = 0,
+data class Reply(var op : Int = 0,
                  var denied : Boolean = false,
                  var balance : Long = 0)
     : CatalystSerializable {
 
     override fun readObject(buffer: BufferInput<*>?,
                             serializer: Serializer?) {
-        seq = buffer!!.readInt()
-        op = buffer.readInt()
+        op = buffer!!.readInt()
         denied = buffer.readBoolean()
         balance = buffer.readLong()
     }
 
     override fun writeObject(buffer: BufferOutput<*>?,
                              serializer: Serializer?) {
-        buffer?.writeInt(seq)
-              ?.writeInt(op)
+        buffer?.writeInt(op)
               ?.writeBoolean(denied)
               ?.writeLong(balance)
     }
