@@ -2,14 +2,20 @@ package pt.um.tf.lab3.lab3srv
 
 import io.atomix.catalyst.concurrent.SingleThreadContext
 import io.atomix.catalyst.serializer.Serializer
+import io.atomix.catalyst.transport.Address
+import io.atomix.catalyst.transport.Transport
+import io.atomix.catalyst.transport.netty.NettyTransport
 import pt.haslab.ekit.Spread
 import pt.um.tf.lab3.lab3mes.Message
 import pt.um.tf.lab3.lab3mes.Reply
 import pt.um.tf.lab3.lab3mes.UpdateMessage
+import pt.um.tf.lab3.lab3mes.getSHA256
 import spread.MembershipInfo
 import spread.SpreadGroup
 import spread.SpreadMessage
-import java.util.concurrent.ThreadLocalRandom
+import java.net.ServerSocket
+import java.security.SecureRandom
+import java.util.concurrent.CompletableFuture
 import java.util.logging.Level
 import java.util.logging.Logger
 
@@ -24,14 +30,17 @@ private class Main(s: Boolean) {
         val LOGGER : Logger = Logger.getLogger("Main")
     }
 
-    val tlr = ThreadLocalRandom.current()
-    val me = "${tlr.nextLong()}${tlr.nextLong()}${tlr.nextLong()}${tlr.nextLong()}"
+    val tlr = SecureRandom()
+    val b = ByteArray(512)
+    val random = "${tlr.nextBytes(b)}"
+    val me = getSHA256(random)
+    val t : Transport = NettyTransport()
     val sr = Serializer()
     val tc = SingleThreadContext("srv-%d",sr)
     val acc = Account()
     val spread = Spread("srv-$me", true)
     var quality: Quality = if (s) Quality.first() else Quality.initFollow()
-    val known = mutableSetOf<String>()
+    val known = mutableSetOf<SpreadGroup>()
 
     lateinit var spreadGroup : SpreadGroup
     lateinit var leaderGroup : SpreadGroup
@@ -42,6 +51,7 @@ private class Main(s: Boolean) {
         sr.register(UpdateMessage::class.java)
         if(quality == Quality.LEADER) {
             leaderGroup = spread.privateGroup
+            tc.execute(this::startServer)
         }
         tc.execute(this::handlers)
           .thenAccept(this::openAndJoin)
@@ -53,36 +63,45 @@ private class Main(s: Boolean) {
     }
 
     private fun openAndJoin(void : Void) {
+        known += spread.privateGroup
         spread.open()
         spreadGroup = spread.join("banks")
     }
 
+    private fun startServer() {
+        var again = false
+        while(again) {
+            var c : CompletableFuture<Void> = CompletableFuture()
+            tc.execute({
+                c = t.server().listen(Address("127.0.0.1", 22556), {
+                    it.handler(Message::class.java, this::handlerMessage)
+                })
+            })
+            try {
+                c.get()
+                again = true
+            }
+            catch(e : Exception) {
+                //Infinite cycle of attempting to server here.
+            }
+        }
+    }
+
     private fun handlers() {
         LOGGER.log(Level.INFO,"Handling connection")
-        spread.handler(Message::class.java, {
-            sm : SpreadMessage,
-            m : Message -> handler(sm, m)
-        }).handler(Reply::class.java, {
-            sm : SpreadMessage,
-            m : Reply -> handler(m)
-        }).handler(spread.MembershipInfo::class.java, {
-            sm : SpreadMessage,
-            m : spread.MembershipInfo -> handler(sm, m)
+        spread.handler(spread.MembershipInfo::class.java, {
+            _ : SpreadMessage,
+            m : spread.MembershipInfo -> handler(m)
         }).handler(UpdateMessage::class.java, {
             sm : SpreadMessage,
             m : UpdateMessage -> handler(sm, m)
         })
     }
 
-    private fun handler(m: Reply) {
-        LOGGER.log(Level.SEVERE, "Reply : $m")
-    }
-
-    private fun handler(sm: SpreadMessage,
-                        m: MembershipInfo) {
+    private fun handler(m: MembershipInfo) {
         when (quality) {
             Quality.LEADER -> {
-                if (m.isCausedByJoin()) {
+                if (m.isCausedByJoin) {
                     val spm = SpreadMessage()
                     spm.addGroup(m.joined)
                     spm.setSafe()
@@ -90,21 +109,28 @@ private class Main(s: Boolean) {
                 }
             }
             Quality.FOLLOWER -> {
-                if (m.isCausedByLeave()) {
+                if (m.isCausedByLeave) {
+                    //Assumption that left group is always size 1.
                     if (leaderGroup == m.left) {
-                        val smallest : String = known.min() ?: me
-                        if(me <= smallest) {
+                        val smallest : SpreadGroup =
+                                known.minBy { it.toString() } ?: spread.privateGroup
+                        if(spread.privateGroup.toString() <= smallest.toString()) {
                             quality.rise()
+                            //I am the leader
+                            //I start the server on the downed port
+                            //Might blow up if port is not reusable.
+                            startServer()
                             //Leaders can only fail crash
                             known.clear()
                         }
                         else {
                             known.remove(smallest)
+                            leaderGroup = smallest
                         }
                     }
                 }
-                else if (m.isCausedByJoin()) {
-                    known.add(m.joined.toString())
+                else if (m.isCausedByJoin) {
+                    known += m.joined
                 }
             }
         }
@@ -115,7 +141,12 @@ private class Main(s: Boolean) {
                         m: UpdateMessage) {
         when (quality) {
             Quality.LEADER -> {
-                LOGGER.log(Level.SEVERE, "Leader got update")
+                if (sm.sender == leaderGroup) {
+                    LOGGER.log(Level.INFO, "Leader got update")
+                }
+                else {
+                    LOGGER.log(Level.SEVERE, "Leader got update from follower!!")
+                }
             }
             Quality.FOLLOWER -> {
                 leaderGroup = sm.sender
@@ -124,33 +155,28 @@ private class Main(s: Boolean) {
         }
     }
 
-    private fun handler(sm : SpreadMessage,
-                        m : Message) {
-        when (quality) {
-            Quality.LEADER -> {
-                val spm = SpreadMessage()
-                spm.addGroup(sm.sender)
-                spm.setSafe()
-                when (m.op) {
-                    1 -> {
-                        spread.multicast(spm, Reply(m.seq,1, acc.movement(m.mov), acc.balance()))
-                    }
-                    0 -> {
-                        spread.multicast(spm, Reply(m.seq,0, false, acc.balance()))
-                    }
-                }
+    private fun handlerMessage(m : Message) : CompletableFuture<Reply> {
+        var r : CompletableFuture<Reply> = CompletableFuture()
+        when (m.op) {
+            1 -> {
+                r = CompletableFuture.completedFuture(
+                        Reply(1,
+                              acc.movement(m.mov),
+                              acc.balance()))
+
             }
-            Quality.FOLLOWER -> {
-                LOGGER.log(Level.WARNING, "Follower got message")
-                //Redirect message to leader
-                if (leaderGroup !in sm.groups) {
-                    val spm = SpreadMessage()
-                    spm.addGroup(leaderGroup)
-                    spm.setSafe()
-                    spread.multicast(spm, m)
-                }
+            0 -> {
+                r = CompletableFuture.completedFuture(
+                        Reply(0,
+                              false,
+                              acc.balance()))
             }
         }
+        val spm = SpreadMessage()
+        spm.addGroup(spreadGroup)
+        spm.setSafe()
+        spread.multicast(spm, UpdateMessage(acc.balance()))
+        return r
     }
 
 }
