@@ -1,42 +1,36 @@
 package pt.um.tf.lab3.lab3srv
 
 import io.atomix.catalyst.concurrent.SingleThreadContext
+import io.atomix.catalyst.concurrent.ThreadContext
 import io.atomix.catalyst.serializer.Serializer
 import io.atomix.catalyst.transport.Address
 import io.atomix.catalyst.transport.Transport
 import io.atomix.catalyst.transport.netty.NettyTransport
+import mu.KLogging
 import pt.haslab.ekit.Spread
 import pt.um.tf.lab3.lab3mes.Message
 import pt.um.tf.lab3.lab3mes.Reply
 import pt.um.tf.lab3.lab3mes.UpdateMessage
-import pt.um.tf.lab3.lab3mes.getSHA256
 import spread.MembershipInfo
 import spread.SpreadGroup
 import spread.SpreadMessage
-import java.net.ServerSocket
-import java.security.SecureRandom
+import java.util.*
 import java.util.concurrent.CompletableFuture
-import java.util.logging.Level
-import java.util.logging.Logger
 
 
 fun main(args : Array<String>) {
-    val main = Main(if (args.size>=0) args[0].toBoolean() else false)
+    val main = Main(if (args.isNotEmpty()) args[0].toBoolean() else false)
     main.run()
 }
 
 private class Main(s: Boolean) {
-    companion object {
-        val LOGGER : Logger = Logger.getLogger("Main")
-    }
+    companion object : KLogging()
 
-    val tlr = SecureRandom()
-    val b = ByteArray(512)
-    val random = "${tlr.nextBytes(b)}"
-    val me = getSHA256(random)
+    val me : UUID = UUID.randomUUID()
     val t : Transport = NettyTransport()
     val sr = Serializer()
-    val tc = SingleThreadContext("srv-%d",sr)
+    val spreadtc = SingleThreadContext("ssrv-%d",sr)
+    var conntc : ThreadContext? = null
     val acc = Account()
     val spread = Spread("srv-$me", true)
     var quality: Quality = if (s) Quality.first() else Quality.initFollow()
@@ -49,37 +43,45 @@ private class Main(s: Boolean) {
         sr.register(Message::class.java)
         sr.register(Reply::class.java)
         sr.register(UpdateMessage::class.java)
-        if(quality == Quality.LEADER) {
-            leaderGroup = spread.privateGroup
-            tc.execute(this::startServer)
+        spreadtc.execute(this::openAndJoin)
+          .thenRun(this::handlers)
+          .exceptionally {
+            logger.info("", it)
+            return@exceptionally null
         }
-        tc.execute(this::handlers)
-          .thenAccept(this::openAndJoin)
+        if(quality == Quality.LEADER) {
+            startServer()
+        }
         while(readLine() == null);
         spread.leave(spreadGroup)
         spread.close()
-        tc.close()
-        LOGGER.log(Level.INFO,"I'm here")
+        t.close()
+        spreadtc.close()
+        if(quality == Quality.LEADER) {
+            conntc?.close()
+        }
+        logger.info("I'm here")
     }
 
-    private fun openAndJoin(void : Void) {
-        known += spread.privateGroup
-        spread.open()
-        spreadGroup = spread.join("banks")
+    private fun openAndJoin() {
+        spread.open().get()
+        spread.join("banks")
     }
 
     private fun startServer() {
-        var again = false
+        conntc = SingleThreadContext("csrv-%d", sr)
+        var again = true
         while(again) {
             var c : CompletableFuture<Void> = CompletableFuture()
-            tc.execute({
-                c = t.server().listen(Address("127.0.0.1", 22556), {
+            conntc?.execute {
+                c = t.server().listen(Address("127.0.0.1", 22556)) {
                     it.handler(Message::class.java, this::handlerMessage)
-                })
-            })
+                }
+                logger.info("Server started at $c")
+            }?.join()
             try {
                 c.get()
-                again = true
+                again = false
             }
             catch(e : Exception) {
                 //Infinite cycle of attempting to server here.
@@ -88,32 +90,39 @@ private class Main(s: Boolean) {
     }
 
     private fun handlers() {
-        LOGGER.log(Level.INFO,"Handling connection")
-        spread.handler(spread.MembershipInfo::class.java, {
-            _ : SpreadMessage,
-            m : spread.MembershipInfo -> handler(m)
-        }).handler(UpdateMessage::class.java, {
-            sm : SpreadMessage,
-            m : UpdateMessage -> handler(sm, m)
-        })
+        logger.info("Handling connection")
+        spread.handler(spread.MembershipInfo::class.java, this@Main::handler)
+              .handler(UpdateMessage::class.java, this@Main::handler)
     }
 
-    private fun handler(m: MembershipInfo) {
+    private fun handler(sm : SpreadMessage, m: MembershipInfo) {
         when (quality) {
             Quality.LEADER -> {
                 if (m.isCausedByJoin) {
-                    val spm = SpreadMessage()
-                    spm.addGroup(m.joined)
-                    spm.setSafe()
-                    spread.multicast(spm, UpdateMessage(acc.balance()))
+                    if(m.joined == spread.privateGroup) {
+                        leaderGroup = spread.privateGroup
+                        spreadGroup = m.group
+                        logger.info("$me joined group : $spreadGroup")
+                    }
+                    else {
+                        val spm = SpreadMessage()
+                        spm.addGroup(m.joined)
+                        spm.setSafe()
+                        spread.multicast(spm, UpdateMessage(acc.balance()))
+                        logger.info("${m.group} joined: ${m.joined}")
+                    }
+                    known += m.joined
+                }
+                else if (m.isCausedByLeave) {
+                    logger.info("${m.group} left: ${m.left}")
+                    known -= m.left
                 }
             }
             Quality.FOLLOWER -> {
                 if (m.isCausedByLeave) {
                     //Assumption that left group is always size 1.
                     if (leaderGroup == m.left) {
-                        val smallest : SpreadGroup =
-                                known.minBy { it.toString() } ?: spread.privateGroup
+                        val smallest = known.minBy { it.toString() } ?: spread.privateGroup
                         if(spread.privateGroup.toString() <= smallest.toString()) {
                             quality.rise()
                             //I am the leader
@@ -121,20 +130,22 @@ private class Main(s: Boolean) {
                             //Might blow up if port is not reusable.
                             startServer()
                             //Leaders can only fail crash
-                            known.clear()
                         }
-                        else {
-                            known.remove(smallest)
-                            leaderGroup = smallest
-                        }
+                        known -= m.left
+                        leaderGroup = smallest
+                        logger.info { "New leader : $smallest" }
                     }
+                    logger.info("${m.group} left: ${m.left}")
                 }
                 else if (m.isCausedByJoin) {
+                    if(m.joined == spread.privateGroup) {
+                        spreadGroup = m.group
+                    }
                     known += m.joined
+                    logger.info("${m.group} joined: ${m.joined}")
                 }
             }
         }
-
     }
 
     private fun handler(sm: SpreadMessage,
@@ -142,34 +153,35 @@ private class Main(s: Boolean) {
         when (quality) {
             Quality.LEADER -> {
                 if (sm.sender == leaderGroup) {
-                    LOGGER.log(Level.INFO, "Leader got update")
+                    logger.info("Leader got update")
                 }
                 else {
-                    LOGGER.log(Level.SEVERE, "Leader got update from follower!!")
+                    logger.error("Leader got update from follower!!")
                 }
             }
             Quality.FOLLOWER -> {
                 leaderGroup = sm.sender
                 acc.updateBalance(m.accbalance)
+                logger.info { "Update to ${m.accbalance}" }
             }
         }
     }
 
     private fun handlerMessage(m : Message) : CompletableFuture<Reply> {
-        var r : CompletableFuture<Reply> = CompletableFuture()
-        when (m.op) {
+        val r : CompletableFuture<Reply>
+        r = when (m.op) {
             1 -> {
-                r = CompletableFuture.completedFuture(
-                        Reply(1,
-                              acc.movement(m.mov),
-                              acc.balance()))
-
+                //logger.info("Movement of ${m.mov}")
+                val rp = Reply(1, !acc.movement(m.mov), m.mov)
+                CompletableFuture.completedFuture(rp)
             }
             0 -> {
-                r = CompletableFuture.completedFuture(
-                        Reply(0,
-                              false,
-                              acc.balance()))
+                logger.info("Balance of ${acc.balance()}")
+                val rp = Reply(0, false, acc.balance())
+                CompletableFuture.completedFuture(rp)
+            }
+            else -> {
+                CompletableFuture.failedFuture(InputMismatchException())
             }
         }
         val spm = SpreadMessage()
