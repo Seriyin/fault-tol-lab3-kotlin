@@ -4,84 +4,66 @@ import io.atomix.catalyst.concurrent.ThreadContext
 import io.atomix.catalyst.transport.Address
 import io.atomix.catalyst.transport.Connection
 import io.atomix.catalyst.transport.Transport
-import pt.haslab.ekit.Spread
+import mu.KLogging
 import pt.um.tf.lab3.lab3mes.Bank
 import pt.um.tf.lab3.lab3mes.Message
 import pt.um.tf.lab3.lab3mes.Reply
-import spread.SpreadMessage
-import java.util.*
 import java.util.concurrent.CompletableFuture
-import java.util.logging.Level
-import java.util.logging.Logger
 
-class BankStub(val me: Address,
-               val t: Transport,
-               val tc: ThreadContext) : Bank
+class BankStub(private val me: Address,
+               private val t: Transport,
+               private val tc: ThreadContext) : Bank
 {
-    companion object {
-        val LOGGER : Logger = Logger.getLogger("BankStub")
-    }
+    companion object : KLogging()
 
-    private var conn : Connection? = null
     private var comFMov : CompletableFuture<Boolean> = CompletableFuture()
     private var comFBal : CompletableFuture<Long> = CompletableFuture()
+    private var conn : Connection? = null
+    private var comFConn : CompletableFuture<Connection> = CompletableFuture()
+
 
     init {
         tryRestart()
     }
 
     private fun tryRestart() {
-        while(conn == null) {
-            var comFConn : CompletableFuture<Connection> = CompletableFuture()
-            tc.execute({
-                comFConn = t.client().connect(me)
-            })
-            conn = try {
-                comFConn.get()
-            } catch (e : Exception) {
-                //Infinite cycle of attempting connection here.
-                null
-            }
-        }
+        tc.execute(this@BankStub::connect).exceptionally {
+            logger.error("Try Restart", it)
+            tryRestart()
+            return@exceptionally null
+        }.get()
+        conn = comFConn.get()
     }
 
+    private fun connect() {
+        comFConn = t.client().connect(me)
+    }
+
+
     override fun movement(mov: Long): Boolean {
-        var res : Boolean
-        comFMov = CompletableFuture()
         tc.execute {
-            comFMov = conn!!.sendAndReceive<Message, Reply>(Message(1, mov, me.host()))
-                            .handle({
-                r, e -> if (e != null) throw e else r.denied
-            })
-        }
-        try {
-            res = comFMov.get()
-        }
-        catch (e : Exception) {
-            res = false
+            val m = Message(1, mov, me.host())
+            comFMov = conn!!.sendAndReceive<Message, Reply>(m)
+                            .thenApply(Reply::denied)
+        }.get()
+        return comFMov.exceptionally {
+            logger.error("Failed on Moving $mov", it)
             tryRestart()
-        }
-        return res
+            return@exceptionally movement(mov)
+        }.get()
     }
 
     override fun balance(): Long {
-        var res : Long
-        comFBal = CompletableFuture()
         tc.execute {
-            comFBal = conn!!.sendAndReceive<Message, Reply>(
-                    Message(0, 0, me.host()))
-                            .handle({
-                r, e -> if (e != null) throw e else r.balance
-            })
-        }
-        try {
-            res = comFBal.get()
-        }
-        catch (e : Exception) {
-            res = -1
+            val m = Message(0, 0, me.host())
+            comFBal = conn!!.sendAndReceive<Message, Reply>(m)
+                            .thenApply(Reply::balance)
+        }.get()
+        return comFBal.exceptionally {
+            logger.error("Failed on Balance", it)
             tryRestart()
-        }
-        return res
+            return@exceptionally balance()
+        }.get()
     }
 
 }
