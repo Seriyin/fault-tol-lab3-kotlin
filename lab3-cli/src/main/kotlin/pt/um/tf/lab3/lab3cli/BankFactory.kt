@@ -13,12 +13,12 @@ import java.util.*
 import java.util.concurrent.ThreadLocalRandom
 
 class BankFactory {
+    private val me = Address("127.0.0.1", 22556)
     private val l = mutableListOf<ThreadContext>()
+    private val t = NettyTransport()
 
     fun newBank() : Bank {
         val sr = Serializer()
-        val t = NettyTransport()
-        val me = Address("127.0.0.1", 22556)
         sr.register(Message::class.java)
         sr.register(Reply::class.java)
         val tc : ThreadContext = SingleThreadContext("cli-%d", sr)
@@ -27,6 +27,7 @@ class BankFactory {
     }
 
     fun closeBanks() {
+        t.close()
         l.forEach(ThreadContext::close)
         l.clear()
     }
