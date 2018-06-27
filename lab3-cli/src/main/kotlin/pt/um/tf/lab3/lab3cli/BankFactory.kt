@@ -5,12 +5,9 @@ import io.atomix.catalyst.concurrent.ThreadContext
 import io.atomix.catalyst.serializer.Serializer
 import io.atomix.catalyst.transport.Address
 import io.atomix.catalyst.transport.netty.NettyTransport
-import pt.haslab.ekit.Spread
 import pt.um.tf.lab3.lab3mes.Bank
 import pt.um.tf.lab3.lab3mes.Message
 import pt.um.tf.lab3.lab3mes.Reply
-import java.util.*
-import java.util.concurrent.ThreadLocalRandom
 
 class BankFactory {
     private val me = Address("127.0.0.1", 22556)
